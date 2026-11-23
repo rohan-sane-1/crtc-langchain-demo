@@ -31,3 +31,43 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
+
+export type CaseSummary = {
+  id: string;
+  notice_number: string;
+  title: string | null;
+  status: string | null;
+  sector: string | null;
+  proceeding_type: string | null;
+  posted_date: string | null;
+  intervention_deadline: string | null;
+  applicant: string | null;
+  province: string | null;
+  document_count: number;
+  source_url: string | null;
+};
+export type FacetOption = { value: string | number; count: number };
+export type Facets = {
+  status: { open: number; closed: number; all: number };
+  sector: { broadcasting: number; telecom: number; compliance: number };
+  proceeding_types: FacetOption[];
+  years: FacetOption[];
+  provinces: FacetOption[];
+  closing: { "7": number; "30": number };
+  with_documents: number;
+};
+export type CasesResponse = {
+  total_cases_listed: number;
+  matched: number;
+  returned: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  sort: string;
+  cases: CaseSummary[];
+  facets: Facets | null;
+  refreshed: boolean;
+  stale: boolean;
+  last_listed_at: string | null;
+  dropped_records: number | null;
+};

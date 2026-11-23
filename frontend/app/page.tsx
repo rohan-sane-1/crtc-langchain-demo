@@ -45,6 +45,9 @@ export default function HomePage() {
       >
         New chat
       </button>
+      <Link href="/cases" className="mb-6 ml-4 text-sm underline">
+        Browse CRTC proceedings
+      </Link>
 
       {chats === null ? (
         <p className="text-sm text-neutral-500">Loading…</p>

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import check_origin
 from app.config import get_settings
 from app.db import engine
-from app.routes import auth, chats
+from app.routes import auth, cases, chats
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(chats.router)
+app.include_router(cases.router)
 
 
 @app.get("/health")

@@ -208,6 +208,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "google-auth", extra = ["requests"] },
+    { name = "httpx" },
     { name = "itsdangerous" },
     { name = "pgvector" },
     { name = "pydantic" },
@@ -219,7 +220,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -231,6 +231,7 @@ requires-dist = [
     { name = "asyncpg", specifier = "==0.32.0" },
     { name = "fastapi", specifier = "==0.165.0" },
     { name = "google-auth", extras = ["requests"], specifier = "==2.62.2" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "itsdangerous", specifier = "==2.2.0" },
     { name = "pgvector", specifier = "==0.5.1" },
     { name = "pydantic", specifier = "==2.14.4" },
@@ -242,7 +243,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = "==0.28.1" },
     { name = "pytest", specifier = "==9.2.0" },
     { name = "pytest-asyncio", specifier = "==1.5.0" },
     { name = "ruff", specifier = "==0.17.6" },

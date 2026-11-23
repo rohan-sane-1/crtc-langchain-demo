@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://crtc:crtc@localhost:5433/crtc"
 
+    # CRTC HTTP client / case list (Phase 2)
+    crtc_list_url: str = "https://applications.crtc.gc.ca/portail-portal/eng/listes-lists/18/data"
+    crtc_list_ttl_minutes: int = Field(default=60, ge=1)
+    # The full list is ~18 MB today (it grows every year). Default leaves ~2x headroom.
+    crtc_max_response_bytes: int = Field(default=40 * 1024 * 1024, ge=1024)
+    crtc_connect_timeout_s: float = Field(default=10.0, gt=0)
+    crtc_read_timeout_s: float = Field(default=60.0, gt=0)
+    crtc_max_redirects: int = Field(default=3, ge=0, le=10)
+    crtc_max_retries: int = Field(default=3, ge=0, le=6)
+    crtc_min_request_interval_s: float = Field(default=1.0, ge=0)
+    crtc_user_agent: str = "crtc-copilot/0.1 (personal research tool; polite client; 1 req/s)"
+
     # Auth
     google_client_id: str
     session_secret: str = Field(min_length=32)
