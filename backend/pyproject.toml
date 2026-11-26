@@ -16,6 +16,12 @@ dependencies = [
     "requests==2.34.2",
     "itsdangerous==2.2.0",
     "httpx==0.28.1",
+    "tzdata==2026.6",
+    # Phase 3 (knowledge-base sync)
+    "pymupdf==1.28.2",  # PDF text extraction (AGPL-3.0 or commercial; fine for a local tool)
+    "defusedxml==0.7.1",  # XML in DOCX files
+    "sentence-transformers==6.3.0",  # local embeddings
+    "torch==2.15.0",  # CPU-only build (see [tool.uv.sources])
 ]
 
 [dependency-groups]
@@ -24,6 +30,15 @@ dev = [
     "pytest-asyncio==1.5.0",
     "ruff==0.17.6",
 ]
+
+# torch from the CPU-only index: no CUDA libraries (keeps the install ~1 GB smaller on Linux).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

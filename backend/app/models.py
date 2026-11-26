@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     Date,
     DateTime,
@@ -32,6 +33,7 @@ class DocumentStatus(str, enum.Enum):
     embedded = "embedded"
     failed = "failed"
     skipped = "skipped"
+    blocked = "blocked"  # the server (403/429/Cloudflare) or robots.txt refused us
 
 
 class User(Base):
@@ -120,6 +122,12 @@ class Chat(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index("ix_documents_case_status", "case_id", "status"),
+        CheckConstraint(
+            "numbering IS NULL OR numbering IN ('source', 'synthetic')", name="ck_documents_numbering"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cases.id", ondelete="CASCADE"))
@@ -135,6 +143,14 @@ class Document(Base):
     error: Mapped[str | None] = mapped_column(Text)
     n_paragraphs: Mapped[int | None] = mapped_column(Integer)
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Added in migration 0003 (Phase 3)
+    kind: Mapped[str | None] = mapped_column(Text)  # filing | archive | archive_member | notice | ...
+    detected_type: Mapped[str | None] = mapped_column(Text)  # from magic bytes, not the extension
+    bytes: Mapped[int | None] = mapped_column(BigInteger)
+    numbering: Mapped[str | None] = mapped_column(Text)  # "source" | "synthetic"
+    source_signature: Mapped[str | None] = mapped_column(Text)  # change detector (size/date/crc)
+    note: Mapped[str | None] = mapped_column(Text)  # non-fatal warning on an embedded doc
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     chunks: Mapped[list["Chunk"]] = relationship(cascade="all, delete-orphan")
 

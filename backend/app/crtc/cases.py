@@ -8,6 +8,7 @@ import weakref
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
 from sqlalchemy import Integer, case, cast, func, select
@@ -20,6 +21,10 @@ from app.crtc.html import Link, extract_links, html_to_text
 from app.models import Case
 
 log = logging.getLogger(__name__)
+
+# CRTC deadlines are calendar dates in Eastern time. "Today" and the "closing in 7/30 days"
+# windows must be computed there, not in UTC: at 21:00 Toronto the UTC date is already tomorrow.
+CRTC_TZ = ZoneInfo("America/Toronto")
 
 MAX_RAW_FIELD_LEN = 200_000  # per raw JSON field; larger => the record is dropped
 UPSERT_BATCH = 500  # 13 columns per row; keeps well under asyncpg's 32k bind-parameter limit
@@ -74,6 +79,18 @@ _SUBJECT_DEADLINE_RE = re.compile(
     re.IGNORECASE,
 )
 _FILE_NO_RE = re.compile(r"^\d{4}-[A-Z]+\d*-\d{6,9}$")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def crtc_today(now: datetime | None = None) -> date:
+    """Today's calendar date in America/Toronto. `now` must be timezone-aware."""
+    now = now or _utcnow()
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    return now.astimezone(CRTC_TZ).date()
 
 
 class CrtcParseError(Exception):
@@ -634,7 +651,7 @@ async def search_cases(
     today: date | None = None,
 ) -> SearchResult:
     """Filter, rank, sort and paginate cached cases. Raises InvalidFilter on bad values."""
-    today = today or datetime.now(UTC).date()
+    today = today or crtc_today()
     sort = sort or ("relevance" if (filters.q or "").strip() else "deadline")
     validate_static(filters, sort)
     await validate_values(session, filters)

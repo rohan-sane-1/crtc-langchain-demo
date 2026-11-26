@@ -107,3 +107,88 @@ async def db_session():
     await engine.dispose()
     await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
     await admin.close()
+
+
+# --------------------------------------------------------------------------- Phase 3 fixtures
+
+
+@pytest.fixture
+async def kb_db():
+    """A throwaway Postgres with the FULL schema (incl. pgvector, documents, chunks).
+    Yields an object with .engine and .maker. Skips if Postgres isn't reachable."""
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    import app.models  # noqa: F401  (registers all tables on Base.metadata)
+    from app.config import get_settings
+    from app.db import Base
+
+    url = make_url(get_settings().database_url)
+    name = f"crtc_test_{uuid.uuid4().hex[:10]}"
+    admin_dsn = url.set(drivername="postgresql", database="postgres").render_as_string(
+        hide_password=False
+    )
+    try:
+        admin = await asyncpg.connect(admin_dsn, timeout=3)
+    except (OSError, asyncpg.PostgresError):
+        pytest.skip("Postgres not reachable (docker compose up -d)")
+    await admin.execute(f'CREATE DATABASE "{name}"')
+    engine = create_async_engine(url.set(database=name))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.run_sync(Base.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    yield SimpleNamespace(engine=engine, maker=maker, name=name, url=url.set(database=name))
+    await engine.dispose()
+    await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    await admin.close()
+
+
+@pytest.fixture
+def site():
+    from tests.fakes import FakeSite
+
+    return FakeSite()
+
+
+@pytest.fixture
+def embedder():
+    from tests.fakes import HashEmbedder
+
+    return HashEmbedder()
+
+
+@pytest.fixture
+def make_deps(kb_db, make_client, site, embedder, tmp_path):
+    """Deps wired to the throwaway DB, the fake site, a fake embedder and a temp originals dir."""
+    from app.ingest.pipeline import Deps
+    from app.ingest.store import OriginalsStore
+
+    def factory(**over):
+        client_kw = over.pop("client_kw", {})
+        deps = Deps(
+            engine=kb_db.engine,
+            session_factory=kb_db.maker,
+            client=make_client(site, **client_kw),
+            embedder=over.pop("embedder", embedder),
+            store=OriginalsStore(tmp_path / "originals"),
+            **over,
+        )
+        return deps
+
+    return factory
+
+
+@pytest.fixture
+def make_case(kb_db):
+    from app.models import Case
+
+    async def factory(notice="2026-259", **kw):
+        async with kb_db.maker() as s, s.begin():
+            case = Case(notice_number=notice, title=f"Case {notice}", status="open", **kw)
+            s.add(case)
+        return case
+
+    return factory

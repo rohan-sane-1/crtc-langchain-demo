@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { KnowledgeBase } from "@/components/KnowledgeBase";
 import { api, ApiError, type CaseSummary, type Chat } from "@/lib/api";
 import { useRequireUser } from "@/lib/use-user";
 
@@ -49,6 +50,9 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
               </Link>
             </p>
           )}
+          {chat.case_id && theCase ? (
+            <KnowledgeBase caseId={chat.case_id} notice={theCase.notice_number} />
+          ) : null}
           <p className="mt-6 rounded border bg-white p-4 text-sm text-neutral-600">
             Messaging arrives in a later phase.
           </p>

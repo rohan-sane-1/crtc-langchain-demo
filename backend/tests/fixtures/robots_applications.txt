@@ -1,0 +1,14 @@
+User-agent: *
+Disallow: /aspnet_client/
+Disallow: /assets/
+Disallow: /DocWebBroker/
+Disallow: /ListeInterventionList/
+Disallow: /preweb/
+Disallow: /recherche-search/
+Disallow: /listes-lists/interventions/
+Disallow: /listes-lists/instances-publiques/
+Disallow: /listes-lists/public-proceedings/
+Disallow: /telecom-applications-report/
+Disallow: /rapport-demandes-telecom/
+Disallow: /broadcasting-applications-report/
+Disallow: /rapport-demandes-radiodiffusion/

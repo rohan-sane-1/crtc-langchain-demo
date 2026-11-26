@@ -24,3 +24,6 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/settings.local.json
+# Phase 3: downloaded originals and other local data
+backend/data/
+data/

@@ -344,9 +344,11 @@ def test_deadline_comes_from_intrdt_not_the_stale_subject_date():
             "2027-01-07",
         ),
         (
-            "Call - Deadline for submission of interventions: 18 September 2026 - Deadline for "
-            "submission of replies: 18 December 2026 | 2026-47-1 - Revised deadline for "
-            "submission of interventions: 1 December 2026",
+            (
+                "Call - Deadline for submission of interventions: 18 September 2026 - Deadline for "
+                "submission of replies: 18 December 2026 | 2026-47-1 - Revised deadline for "
+                "submission of interventions: 1 December 2026"
+            ),
             "2026-12-01",  # the revised deadline wins; the replies deadline is not used
         ),
         ("Deadline for submission of interventions: 31 February 2026", None),  # impossible date

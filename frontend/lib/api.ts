@@ -71,3 +71,42 @@ export type CasesResponse = {
   last_listed_at: string | null;
   dropped_records: number | null;
 };
+
+// ---- Knowledge-base sync (Phase 3) ----------------------------------------------------
+
+export type DocItem = {
+  title: string | null;
+  filer: string | null;
+  url: string | null;
+  kind: string | null;
+  reason: string | null;
+  reason_code: string;
+};
+export type Coverage = {
+  total_docs_on_record: number;
+  embedded: number;
+  pending: number;
+  failed: DocItem[];
+  skipped: DocItem[];
+  blocked: DocItem[];
+  counts: { pending: number; embedded: number; failed: number; skipped: number; blocked: number };
+  reasons: Record<string, Record<string, number>>;
+  truncated: Record<string, number>;
+  complete: boolean;
+  last_synced_at: string | null;
+  chunks: number;
+};
+export type SyncState = "idle" | "queued" | "listing" | "ingesting" | "done" | "error";
+export type SyncProgress = {
+  phase: SyncState;
+  total: number;
+  done: number;
+  current: string | null;
+  error: string | null;
+};
+export type SyncStatus = {
+  state: SyncState;
+  progress: SyncProgress | null;
+  last_result: { status: string; newly_embedded: number; warnings?: string[]; listing_complete?: boolean } | null;
+  coverage: Coverage;
+};
