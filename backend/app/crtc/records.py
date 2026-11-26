@@ -27,6 +27,7 @@ from datetime import date
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
+from langsmith import traceable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.crtc.client import (
@@ -260,6 +261,11 @@ async def archive_signature(client: CrtcClient, url: str) -> str:
     return sig[:300]
 
 
+@traceable(
+    name="records.list_record_documents",
+    run_type="tool",
+    process_inputs=lambda i: {"notice": getattr(i.get("case"), "notice_number", None)},
+)
 async def list_record_documents(
     case: Any, client: CrtcClient, *, sign_archives: bool = True
 ) -> RecordListing:

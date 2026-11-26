@@ -275,3 +275,8 @@ agent = create_deep_agent(
 2. Google AI Studio API key (Gemini free tier).
 3. LangSmith account (Developer plan). Create an API key and **don't add a card**.
 4. Docker Desktop (or Docker Engine) on the laptop.
+## Status (2026-11-26)
+
+Phases 4 (Deep Agent, hybrid retrieval, citations, chat UI, streaming) and 5 (LangSmith) are
+implemented; see `docs/langsmith.md`. Scheduled refresh: `python -m app.cli refresh-all`.
+Evals (phase 6) not started.

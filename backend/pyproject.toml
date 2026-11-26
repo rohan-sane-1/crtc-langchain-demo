@@ -22,6 +22,18 @@ dependencies = [
     "defusedxml==0.7.1",  # XML in DOCX files
     "sentence-transformers==6.3.0",  # local embeddings
     "torch==2.15.0",  # CPU-only build (see [tool.uv.sources])
+    # Phase 4-5 (agent, tracing, scheduler)
+    "deepagents==0.7.42",
+    "langchain==1.5.2",
+    "langgraph==1.2.24",
+    "langchain-google-genai==4.5.3",
+    "langgraph-checkpoint-postgres==3.2.1",
+    "psycopg[binary,pool]==3.3.9",
+    "langsmith==0.16.2",
+    "apscheduler==3.11.3",
+    "sse-starlette==3.7.1",
+    "python-dotenv==1.2.4",
+    "python-multipart>=0.0.34",
 ]
 
 [dependency-groups]

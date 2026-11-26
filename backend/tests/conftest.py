@@ -6,6 +6,8 @@ os.environ.setdefault("SESSION_SECRET", "x" * 48)
 os.environ.setdefault("FRONTEND_ORIGIN", "http://localhost:3000")
 os.environ.setdefault("ALLOWED_EMAILS", "me@example.com")
 os.environ.setdefault("CRTC_MIN_REQUEST_INTERVAL_S", "0")
+os.environ.setdefault("LANGSMITH_TRACING", "false")  # never post traces from tests
+os.environ.setdefault("EMBEDDING_DIM", "384")
 
 import json
 import uuid

@@ -120,6 +120,22 @@ class Chat(Base):
     )
 
 
+class ChatMessage(Base):
+    """Display history. Assistant rows keep the validated structured answer (paragraphs +
+    citations), which can't be rebuilt from the LangGraph checkpoint (the registry is per-run)."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_chat_created", "chat_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(Text)  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    structured: Mapped[dict | None] = mapped_column(JSONB)
+    run_id: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (

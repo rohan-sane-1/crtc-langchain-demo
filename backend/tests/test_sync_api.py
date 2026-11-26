@@ -180,3 +180,32 @@ async def test_status_lists_blocked_failed_and_skipped_documents_explicitly(api,
     assert cov["complete"] is False and cov["embedded"] == 0
     assert [b["reason_code"] for b in cov["blocked"]] == ["cloudflare_challenge"]
     assert cov["blocked"][0]["title"] == "Notice 2026-501"
+
+
+# ----------------------------------------------------------------------------- portal upload
+
+
+async def test_upload_is_csrf_protected_and_needs_a_file(api):
+    url = f"/cases/{api.case.id}/upload"
+    files = {"file": ("a.pdf", make_pdf(["1. Hello."]), "application/pdf")}
+    assert (await api.post(url, files=files, headers={"Origin": "http://evil.example"})).status_code == 403
+    assert (await api.post(url, headers=ORIGIN)).status_code == 422
+
+
+async def test_upload_ingests_in_the_background_and_reports_the_result(api):
+    url = f"/cases/{api.case.id}/upload"
+    pdf = make_pdf([f"{n}. Paragraph {n} of an uploaded document." for n in range(1, 5)])
+    r = await api.post(url, files={"file": ("Mine.pdf", pdf, "application/pdf")}, headers=ORIGIN)
+    assert r.status_code == 202 and r.json()["started"] is True
+    await drain()
+    st = (await api.get(f"/cases/{api.case.id}/sync-status")).json()
+    assert st["last_result"]["status"] == "uploaded" and st["last_result"]["embedded"] == 1
+    assert st["coverage"]["embedded"] == 1
+    assert [d["title"] for d in st["coverage"]["embedded_docs"]] == ["Mine"]
+
+
+async def test_upload_rejects_empty_files_and_unknown_cases(api):
+    r = await api.post(f"/cases/{api.case.id}/upload", files={"file": ("a.pdf", b"", "application/pdf")}, headers=ORIGIN)
+    assert r.status_code == 400
+    r = await api.post(f"/cases/{uuid.uuid4()}/upload", files={"file": ("a.pdf", b"x", "application/pdf")}, headers=ORIGIN)
+    assert r.status_code == 404

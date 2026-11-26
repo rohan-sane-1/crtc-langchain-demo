@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Coverage, type DocItem, type SyncStatus } from "@/lib/api";
+import { api, ApiError, uploadFile, type Coverage, type DocItem, type SyncStatus } from "@/lib/api";
+import { safeHref } from "@/lib/safe-url";
 
 const RUNNING = new Set(["queued", "listing", "ingesting"]);
 
@@ -29,23 +30,22 @@ const REASONS: Record<string, string> = {
   internal_error: "An unexpected error; the other documents were not affected.",
 };
 
-/** Only render a link for plain https CRTC URLs; everything else is shown as text. */
-function safeHref(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    return u.protocol === "https:" && (u.hostname === "crtc.gc.ca" || u.hostname.endsWith(".crtc.gc.ca"))
-      ? u.toString()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function DocList({ title, tone, items, total }: { title: string; tone: string; items: DocItem[]; total: number }) {
+function DocList({
+  title,
+  tone,
+  items,
+  total,
+  open = false,
+}: {
+  title: string;
+  tone: string;
+  items: DocItem[];
+  total: number;
+  open?: boolean;
+}) {
   if (total === 0) return null;
   return (
-    <details className={`mt-3 rounded border p-3 ${tone}`}>
+    <details className={`mt-3 rounded border p-3 ${tone}`} open={open}>
       <summary className="cursor-pointer text-sm font-medium">
         {title} ({total})
       </summary>
@@ -66,8 +66,14 @@ function DocList({ title, tone, items, total }: { title: string; tone: string; i
                 {d.filer ? <span className="text-neutral-500"> · {d.filer}</span> : null}
               </div>
               <div className="text-xs text-neutral-600">
-                {REASONS[d.reason_code] ?? d.reason ?? "No reason recorded."}
-                {d.reason ? <span className="text-neutral-400"> ({d.reason})</span> : null}
+                {d.reason || !d.note ? (
+                  <>
+                    {REASONS[d.reason_code] ?? d.reason ?? "No reason recorded."}
+                    {d.reason ? <span className="text-neutral-400"> ({d.reason})</span> : null}
+                  </>
+                ) : (
+                  d.note
+                )}
               </div>
             </li>
           );
@@ -82,17 +88,18 @@ function DocList({ title, tone, items, total }: { title: string; tone: string; i
 
 function Summary({ c }: { c: Coverage }) {
   const parts = [`${c.total_docs_on_record} documents on the public record`, `${c.embedded} searchable`];
-  if (c.counts.blocked) parts.push(`${c.counts.blocked} blocked`);
+  if (c.counts.blocked) parts.push(`${c.counts.blocked} need your upload`);
   if (c.counts.skipped) parts.push(`${c.counts.skipped} skipped`);
   if (c.counts.failed) parts.push(`${c.counts.failed} failed`);
   if (c.counts.pending) parts.push(`${c.counts.pending} pending`);
   return <>{parts.join(" · ")}</>;
 }
 
-export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: string }) {
+export function KnowledgeBase({ caseId, sourceUrl }: { caseId: string; sourceUrl: string | null }) {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -132,8 +139,32 @@ export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: stri
     }
   }
 
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      await uploadFile(`/cases/${caseId}/upload`, file);
+      await refresh();
+    } catch (e) {
+      setError(
+        e instanceof ApiError && e.status === 429
+          ? "You have started several syncs or uploads recently. Please wait a few minutes."
+          : e instanceof ApiError
+            ? e.message
+            : "Could not upload the file",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const c = status?.coverage;
-  const never = !!c && c.total_docs_on_record === 0 && !c.last_synced_at;
+  const never = c?.record_state === "not_synced";
+  const empty = c?.record_state === "empty";
+  const unreadable = c ? c.counts.blocked + c.counts.failed : 0;
+  const busy = running || uploading;
+  const proceedingUrl = safeHref(sourceUrl);
   const p = status?.progress;
 
   return (
@@ -142,7 +173,7 @@ export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: stri
         <div>
           <h2 className="font-medium">Documents for this case</h2>
           <p className="mt-1 text-neutral-700" aria-live="polite">
-            {!c ? "Loading…" : never ? "Not synced yet." : <Summary c={c} />}
+            {!c ? "Loading…" : never ? "Not synced yet." : empty ? "No documents on the public record." : <Summary c={c} />}
           </p>
           {c?.last_synced_at ? (
             <p className="mt-1 text-xs text-neutral-500">
@@ -152,10 +183,10 @@ export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: stri
         </div>
         <button
           onClick={start}
-          disabled={starting || running}
+          disabled={starting || busy}
           className="shrink-0 rounded bg-black px-3 py-1.5 text-white disabled:opacity-50"
         >
-          {running ? "Syncing…" : "Sync documents"}
+          {busy ? "Working…" : "Sync documents"}
         </button>
       </div>
 
@@ -186,7 +217,14 @@ export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: stri
       ))}
       {error ? <p className="mt-3 text-red-700">{error}</p> : null}
 
-      {c && !never ? (
+      {c && empty ? (
+        <p className="mt-3 rounded border border-neutral-300 bg-neutral-50 p-2 text-neutral-800">
+          This proceeding has no documents on the public record yet. That is normal, not an error. Use “Sync
+          documents” to check again later.
+        </p>
+      ) : null}
+
+      {c && !never && !empty ? (
         c.complete ? (
           <p className="mt-3 rounded border border-green-300 bg-green-50 p-2 text-green-900">
             Every document on the public record is searchable.
@@ -194,23 +232,69 @@ export function KnowledgeBase({ caseId, notice }: { caseId: string; notice: stri
         ) : (
           <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
             <strong>This knowledge base is incomplete.</strong> Answers can only draw on the {c.embedded} searchable
-            documents; the {c.total_docs_on_record - c.embedded} listed below are not included.
+            documents; the {c.total_docs_on_record - c.embedded} listed below are not included until they are read.
           </p>
         )
       ) : null}
 
       {c ? (
         <>
-          <DocList title="Failed" tone="border-red-200" items={c.failed} total={c.counts.failed} />
-          <DocList title="Blocked" tone="border-amber-200" items={c.blocked} total={c.counts.blocked} />
+          <DocList title="Searchable" tone="border-green-200" items={c.embedded_docs} total={c.counts.embedded} />
+          <DocList title="Blocked by the site" tone="border-amber-200" items={c.blocked} total={c.counts.blocked} open />
+          <DocList title="Failed" tone="border-red-200" items={c.failed} total={c.counts.failed} open />
           <DocList title="Skipped" tone="border-neutral-200" items={c.skipped} total={c.counts.skipped} />
-          {c.counts.blocked > 0 ? (
-            <p className="mt-3 text-xs text-neutral-500">
-              To include a blocked file, download it in your browser and run{" "}
-              <code className="rounded bg-neutral-100 px-1">
-                uv run python -m app.cli ingest-file {notice} &lt;file&gt; --for-url &lt;document url&gt;
-              </code>
-              .
+          {unreadable > 0 || c.counts.skipped > 0 ? (
+            <div className="mt-4 rounded border border-blue-200 bg-blue-50 p-3">
+              <h3 className="font-medium text-blue-900">Add the documents we could not fetch</h3>
+              <p className="mt-1 text-xs text-blue-900">
+                The CRTC site does not let automated tools download these files, but you can. Open the proceeding,
+                download its documents (the ZIP of the proceeding, or individual files), then upload them here. We
+                match them to the list above and read them like any other document.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                {proceedingUrl ? (
+                  <a
+                    href={proceedingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded border border-blue-700 px-3 py-1.5 text-blue-900"
+                  >
+                    1. Open the proceeding on the CRTC site
+                  </a>
+                ) : null}
+                <label
+                  className={`rounded bg-blue-700 px-3 py-1.5 text-white ${busy ? "opacity-50" : "cursor-pointer"}`}
+                >
+                  {uploading ? "Uploading…" : "2. Upload ZIP or files"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    accept=".zip,.pdf,.docx,.html,.htm"
+                    disabled={busy}
+                    onChange={(e) => {
+                      upload(e.target.files?.[0]);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          ) : null}
+          {status?.last_result?.status === "uploaded" ? (
+            <p className="mt-3 text-xs text-neutral-700" aria-live="polite">
+              Upload read: {status.last_result.embedded} of {status.last_result.files} files added (
+              {status.last_result.matched} matched a listed document, {status.last_result.added} added as new).
+              {status.last_result.rejected?.length
+                ? ` ${status.last_result.rejected.length} could not be read: ${status.last_result.rejected
+                    .slice(0, 5)
+                    .map((r) => `${r.name} (${r.reason ?? r.status})`)
+                    .join("; ")}.`
+                : ""}
+            </p>
+          ) : null}
+          {status?.last_result?.status === "upload_failed" ? (
+            <p className="mt-3 rounded border border-red-300 bg-red-50 p-2 text-red-800">
+              The upload could not be read: {status.last_result.error ?? "unknown error"}
             </p>
           ) : null}
         </>

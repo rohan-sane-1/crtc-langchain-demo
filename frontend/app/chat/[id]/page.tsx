@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { ChatPanel } from "@/components/ChatPanel";
 import { KnowledgeBase } from "@/components/KnowledgeBase";
 import { api, ApiError, type CaseSummary, type Chat } from "@/lib/api";
 import { useRequireUser } from "@/lib/use-user";
@@ -27,7 +28,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   if (!user) return null;
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
+    <main className="mx-auto max-w-3xl p-6">
       <Link href="/" className="text-sm underline">
         ← All chats
       </Link>
@@ -51,11 +52,9 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
             </p>
           )}
           {chat.case_id && theCase ? (
-            <KnowledgeBase caseId={chat.case_id} notice={theCase.notice_number} />
+            <KnowledgeBase caseId={chat.case_id} sourceUrl={theCase.source_url} />
           ) : null}
-          <p className="mt-6 rounded border bg-white p-4 text-sm text-neutral-600">
-            Messaging arrives in a later phase.
-          </p>
+          {chat.case_id && theCase ? <ChatPanel chatId={chat.id} /> : null}
         </>
       ) : null}
     </main>

@@ -4,9 +4,9 @@
 tests use a deterministic fake (tests/fakes.py; instant, never downloads a model); production uses
 ``SentenceTransformerEmbedder`` (default ``BAAI/bge-small-en-v1.5``, 384 dims).
 
-Notes for Phase 4 (retrieval): bge models expect the query -- NOT the passages -- to be
-prefixed with ``Represent this sentence for searching relevant passages: ``. Passages are
-embedded as-is, which is what ``embed_passages`` does. Vectors are L2-normalised, so cosine
+Retrieval: bge models expect the query -- NOT the passages -- to be prefixed with
+``Represent this sentence for searching relevant passages: `` (``QUERY_PREFIX``; applied by
+``embed_query``). Passages are embedded as-is, which is what ``embed_passages`` does. Vectors are L2-normalised, so cosine
 distance (the HNSW index's operator class) is the right metric.
 """
 
@@ -15,12 +15,16 @@ from typing import Protocol
 
 from app.config import get_settings
 
+QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
 
 class Embedder(Protocol):
     dim: int
     model_name: str
 
     async def embed_passages(self, texts: list[str]) -> list[list[float]]: ...
+
+    async def embed_query(self, text: str) -> list[float]: ...
 
 
 class SentenceTransformerEmbedder:
@@ -59,3 +63,8 @@ class SentenceTransformerEmbedder:
             return []
         async with self._lock:  # one torch call at a time; keeps CPU/RAM bounded
             return await asyncio.to_thread(self._encode, texts)
+
+    async def embed_query(self, text: str) -> list[float]:
+        async with self._lock:
+            vecs = await asyncio.to_thread(self._encode, [QUERY_PREFIX + text])
+        return vecs[0]

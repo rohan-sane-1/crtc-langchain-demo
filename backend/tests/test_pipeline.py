@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from app.ingest import pipeline
 from app.ingest.parse import ParseFailed
-from app.ingest.pipeline import CaseLock, ingest_local_file, sync_case_knowledge_base
+from app.ingest.pipeline import CaseLock, ingest_local_file, ingest_upload, sync_case_knowledge_base
 from app.ingest.status import coverage
 from app.models import Case, Chunk, Document, DocumentStatus
 from tests.fakes import (
@@ -88,6 +88,11 @@ async def docs_by_title(kb_db, case_id):
     async with kb_db.maker() as s:
         rows = await s.scalars(select(Document).where(Document.case_id == case_id))
         return {d.title: d for d in rows}
+
+
+async def coverage_for(kb_db, case_id):
+    async with kb_db.maker() as s:
+        return await coverage(s, case_id)
 
 
 async def chunk_ids(kb_db, doc_id):
@@ -617,6 +622,62 @@ async def test_ingest_local_file_rejects_unknown_target_and_oversize(kb_db, make
     big.write_bytes(b"%PDF-" + b"x" * 5000)
     with pytest.raises(ValueError, match="larger"):
         await ingest_local_file(case.id, big, deps=deps)
+
+
+async def test_portal_upload_zip_fills_blocked_documents_and_adds_the_rest(kb_db, make_deps, scenario):
+    from tests.fakes import make_zip
+
+    case = await scenario()
+    deps = make_deps(parse=fast_parse)
+    await sync_case_knowledge_base(case.id, deps=deps)
+    before = await coverage_for(kb_db, case.id)
+    assert before["counts"]["blocked"] >= 1 and before["record_state"] == "partial"
+
+    data = make_zip(
+        {
+            "Intervention.PDF": numbered_pdf("filled"),
+            "Something else.pdf": numbered_pdf("extra"),
+            "junk.exe": b"MZ\x90\x00 binary",
+        }
+    )
+    out = await ingest_upload(case.id, "proceeding.zip", data, deps=deps)
+    assert out["status"] == "uploaded" and out["embedded"] == 2
+    assert out["matched"] == 1 and out["added"] == 1 and len(out["rejected"]) == 1
+
+    docs = await docs_by_title(kb_db, case.id)
+    assert docs["Intervention: Intervention.PDF"].status == DocumentStatus.embedded  # kept its CRTC url
+    assert docs["Something else"].kind == "local_file"
+    after = await coverage_for(kb_db, case.id)
+    assert after["counts"]["blocked"] == before["counts"]["blocked"] - 1
+    assert any(d["title"] == "Something else" for d in after["embedded_docs"])
+    # a later sync leaves what the user uploaded alone
+    await sync_case_knowledge_base(case.id, deps=deps, force=True)
+    assert (await docs_by_title(kb_db, case.id))["Something else"].status == DocumentStatus.embedded
+
+
+async def test_portal_upload_rejects_unsafe_zip_and_busy_case(kb_db, make_deps, scenario):
+    case = await scenario()
+    deps = make_deps(parse=fast_parse)
+    with pytest.raises(ValueError, match="unsafe_archive"):
+        await ingest_upload(case.id, "bad.zip", b"PK\x03\x04" + b"\x00" * 40, deps=deps)
+    with pytest.raises(ValueError, match="too large"):
+        await ingest_upload(case.id, "big.pdf", b"%PDF-" + b"x" * (pipeline._s().kb_max_upload_bytes + 1), deps=deps)
+    lock = CaseLock(deps.engine, case.id)
+    assert await lock.acquire(0)
+    try:
+        with pytest.raises(RuntimeError, match="in progress"):
+            await ingest_upload(case.id, "a.pdf", numbered_pdf("a"), deps=deps)
+    finally:
+        await lock.release()
+
+
+async def test_empty_record_is_a_valid_state(kb_db, make_deps, make_case, site):
+    case = await make_case("2026-7")
+    site.add_json(f"{LISTING}?f=2026-7&g=num", filings_payload([]))
+    res = await sync_case_knowledge_base(case.id, deps=make_deps())
+    assert res["status"] != "listing_failed"
+    cov = await coverage_for(kb_db, case.id)
+    assert cov["record_state"] == "empty" and cov["total_docs_on_record"] == 0
 
 
 def test_zipfile_module_sanity():  # keeps the import used; guards against shadowing

@@ -25,6 +25,7 @@ Guarantees (each is covered by tests/test_pipeline.py unless noted):
 import asyncio
 import hashlib
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from langsmith import traceable
 from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -684,6 +686,11 @@ async def _summary(deps: Deps, case_id: uuid.UUID, status: str, newly_embedded: 
     }
 
 
+@traceable(
+    name="sync_case_knowledge_base",
+    run_type="tool",
+    process_inputs=lambda i: {k: str(v) for k, v in i.items() if k != "deps"},
+)
 async def sync_case_knowledge_base(
     case_id: uuid.UUID,
     *,
@@ -759,6 +766,9 @@ async def _sync_locked(deps: Deps, case_id: uuid.UUID, progress: Progress, force
         and case.record_fingerprint == fp
         and rows
         and not _fast_path_blocker(rows, now)
+        # Self-heal: a row that vanished from our table (manual delete, partial restore) must be
+        # re-created even though the live record itself did not change.
+        and {d.url for d in listing.documents} <= {r.source_url for r in rows}
     ):
         async with deps.session_factory() as sess, sess.begin():
             await sess.execute(update(Case).where(Case.id == case_id).values(last_synced_at=now))
@@ -860,6 +870,171 @@ async def ingest_local_file(
             "reason": final.error if final else None,
             "document_id": str(doc.id),
             "title": final.title if final else None,
+            "newly_embedded": run.newly_embedded,
+        }
+    finally:
+        await lock.release()
+
+
+# --------------------------------------------------------------------------- portal upload
+
+_DMID_RE = re.compile(r"DMID=(\d+)", re.IGNORECASE)
+
+
+def _name_key(name: str) -> str:
+    """Comparable form of a file name or title: stem, lower-cased, letters and digits only."""
+    return "".join(ch for ch in _display_title(name).lower() if ch.isalnum())
+
+
+def _match_blocked(name: str, candidates: dict[uuid.UUID, Document]) -> Document | None:
+    """The still-unreadable document on this case that an uploaded file most likely is: its
+    DMID appears in the file name, or the file name and the document title are the same."""
+    base = name.replace("\\", "/").rsplit("/", 1)[-1]
+    key = _name_key(base)
+    ids = set(re.findall(r"\d{5,}", base))
+    for doc in candidates.values():
+        m = _DMID_RE.search(doc.source_url)
+        if m and m.group(1) in ids:
+            return doc
+    if key:
+        for doc in candidates.values():
+            title = doc.title or ""
+            # Titles are often "<kind>: <file name>"; either the whole title or its tail may match.
+            if key in (_name_key(title), _name_key(title.rsplit(": ", 1)[-1])):
+                return doc
+    return None
+
+
+async def ingest_upload(
+    case_id: uuid.UUID,
+    filename: str,
+    data: bytes,
+    *,
+    deps: Deps | None = None,
+    progress: Progress | None = None,
+) -> dict:
+    """Ingest what a user downloaded from the CRTC site and uploaded through the portal: a ZIP of
+    the proceeding's documents, or a single file. Every file goes through the same
+    type-check -> parse -> chunk -> embed -> commit path as a download.
+
+    A file that matches a document we could not fetch (blocked/failed/pending) fills that row,
+    so its citation keeps pointing at the original CRTC URL. Any other file is added to the case
+    as its own ``local_file`` document, so nothing is silently dropped."""
+    deps = deps or default_deps()
+    s = _s()
+    if len(data) > s.kb_max_upload_bytes:
+        raise ValueError("the upload is too large")
+    detected = filetype.detect_type(data)
+    progress = progress or Progress()
+
+    zf: SafeZip | None = None
+    entries: list = []
+    if detected.type == filetype.ZIP:
+        limits = ArchiveLimits(
+            max_entries=s.kb_max_zip_entries,
+            max_total_bytes=s.kb_max_zip_uncompressed_bytes,
+            max_member_bytes=s.crtc_max_document_bytes,
+            max_ratio=s.kb_max_zip_ratio,
+        )
+        try:
+            zf = await asyncio.to_thread(SafeZip, data, limits)
+        except UnsafeArchive as e:
+            raise ValueError(f"unsafe_archive: {e.reason}") from e
+        entries = list(zf.entries)
+    elif len(data) > deps.client.max_document_bytes:
+        raise ValueError("the file is larger than the per-document limit")
+
+    lock = CaseLock(deps.engine, case_id)
+    if not await lock.acquire(0):
+        if zf:
+            zf.close()
+        raise RuntimeError("a sync of this case is in progress; try again shortly")
+    results: list[dict] = []
+    try:
+        run = Run(deps=deps, case_id=case_id, now=deps.clock(), progress=progress)
+        async with deps.session_factory() as sess:
+            if await sess.get(Case, case_id) is None:
+                raise CaseNotFound(str(case_id))
+            rows = await sess.scalars(
+                select(Document).where(
+                    Document.case_id == case_id,
+                    Document.status.in_(
+                        (DocumentStatus.blocked, DocumentStatus.failed, DocumentStatus.pending)
+                    ),
+                    Document.kind != "archive",
+                )
+            )
+            candidates = {d.id: d for d in rows}
+
+        progress.phase = "ingesting"
+        progress.total = len(entries) if zf else 1
+        progress.done = 0
+        try:
+            work = [(e.name, e, e.skip_reason) for e in entries] if zf else [(filename, None, None)]
+            for name, entry, skip in work:
+                progress.current = _display_title(name)
+                if skip:
+                    results.append({"name": name, "status": "skipped", "reason": skip, "matched": False})
+                    progress.done += 1
+                    continue
+                try:
+                    content = await asyncio.to_thread(zf.read, entry) if zf and entry else data
+                except UnsafeArchive as e:
+                    raise ValueError(f"unsafe_archive: {e.reason}") from e
+                doc = _match_blocked(name, candidates)
+                matched = doc is not None
+                if doc is not None:
+                    candidates.pop(doc.id, None)
+                else:
+                    url = f"local-file://{hashlib.sha256(content).hexdigest()}"
+                    async with deps.session_factory() as sess, sess.begin():
+                        existing = await sess.scalar(select(Document).where(Document.source_url == url))
+                        if existing is not None and existing.case_id != case_id:
+                            results.append(
+                                {
+                                    "name": name,
+                                    "status": "failed",
+                                    "reason": "already attached to a different case",
+                                    "matched": False,
+                                }
+                            )
+                            progress.done += 1
+                            continue
+                        doc = existing or Document(
+                            case_id=case_id,
+                            source_url=url,
+                            title=_display_title(name),
+                            kind="local_file",
+                            status=DocumentStatus.pending,
+                        )
+                        sess.add(doc)
+                await _guarded(
+                    run, doc, _ingest_bytes, content, claimed=filetype.claimed_type("", None, name)
+                )
+                async with deps.session_factory() as sess:
+                    final = await sess.get(Document, doc.id)
+                results.append(
+                    {
+                        "name": name,
+                        "status": final.status.value if final else "unknown",
+                        "reason": final.error if final else None,
+                        "matched": matched,
+                        "title": final.title if final else None,
+                    }
+                )
+                progress.done += 1
+        finally:
+            if zf:
+                zf.close()
+        progress.current = None
+        embedded = [r for r in results if r["status"] == "embedded"]
+        return {
+            "status": "uploaded",
+            "files": len(results),
+            "embedded": len(embedded),
+            "matched": sum(1 for r in embedded if r["matched"]),
+            "added": sum(1 for r in embedded if not r["matched"]),
+            "rejected": [r for r in results if r["status"] != "embedded"],
             "newly_embedded": run.newly_embedded,
         }
     finally:

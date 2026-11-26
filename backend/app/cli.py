@@ -1,6 +1,7 @@
 """Command line helpers.
 
     uv run python -m app.cli sync <notice-number> [--force]
+    uv run python -m app.cli refresh-all [--scope chatted|all]
     uv run python -m app.cli ingest-file <notice-number> <path> [--title T] [--filer F] [--for-url URL]
 
 ``ingest-file`` is the fallback for documents the site would not let us download (they show up
@@ -36,6 +37,8 @@ async def _main(argv: list[str]) -> int:
     p = sub.add_parser("sync", help="sync one case's knowledge base")
     p.add_argument("notice")
     p.add_argument("--force", action="store_true")
+    r = sub.add_parser("refresh-all", help="check + refresh every case people are chatting about")
+    r.add_argument("--scope", choices=["chatted", "all"], default="chatted")
     f = sub.add_parser("ingest-file", help="ingest a file you downloaded by hand")
     f.add_argument("notice")
     f.add_argument("path", type=Path)
@@ -49,6 +52,14 @@ async def _main(argv: list[str]) -> int:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:
+        if args.cmd == "refresh-all":
+            from dotenv import load_dotenv
+
+            from app.jobs.refresh import refresh_all_cases
+
+            load_dotenv()  # LangSmith SDK reads LANGSMITH_* from the environment
+            print(json.dumps(await refresh_all_cases(args.scope), indent=2, default=str))
+            return 0
         case_id = await _case_id(args.notice)
         deps = default_deps()
         if args.cmd == "sync":

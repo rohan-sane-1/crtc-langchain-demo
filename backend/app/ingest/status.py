@@ -42,6 +42,7 @@ def _item(d: Document) -> dict[str, Any]:
         "kind": d.kind,
         "reason": d.error,
         "reason_code": split_reason(d.error),
+        "note": d.note,
     }
 
 
@@ -70,12 +71,14 @@ async def coverage(session: AsyncSession, case_id: uuid.UUID) -> dict[str, Any]:
 
     listed: dict[DocumentStatus, list[dict[str, Any]]] = {}
     for st in (
+        DocumentStatus.embedded,
         DocumentStatus.failed,
         DocumentStatus.skipped,
         DocumentStatus.blocked,
         DocumentStatus.pending,
     ):
         listed[st] = [_item(d) for d in await items(st)]
+    searchable = listed[DocumentStatus.embedded]
     failed, skipped, blocked, pending = (
         listed[DocumentStatus.failed],
         listed[DocumentStatus.skipped],
@@ -106,11 +109,21 @@ async def coverage(session: AsyncSession, case_id: uuid.UUID) -> dict[str, Any]:
         and counts["blocked"] == 0
         and counts["skipped"] == benign
     )
+    synced = bool(case and case.last_synced_at)
+    if total == 0:
+        # A record with nothing on it is a valid answer, not an error (once we have looked).
+        record_state = "empty" if synced else "not_synced"
+    elif complete:
+        record_state = "complete"
+    else:
+        record_state = "partial"
     return {
+        "record_state": record_state,
         "case_id": str(case_id),
         "notice_number": case.notice_number if case else None,
         "total_docs_on_record": total,
         "embedded": counts["embedded"],
+        "embedded_docs": searchable,
         "pending": counts["pending"],
         "failed": failed,
         "skipped": skipped,
@@ -119,7 +132,8 @@ async def coverage(session: AsyncSession, case_id: uuid.UUID) -> dict[str, Any]:
         "counts": counts,
         "reasons": reasons,
         "truncated": {
-            s: max(0, counts[s] - LIST_CAP) for s in ("failed", "skipped", "blocked", "pending")
+            s: max(0, counts[s] - LIST_CAP)
+            for s in ("embedded", "failed", "skipped", "blocked", "pending")
         },
         "complete": complete,
         "last_synced_at": case.last_synced_at.isoformat() if case and case.last_synced_at else None,

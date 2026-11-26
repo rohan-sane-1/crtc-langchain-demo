@@ -107,4 +107,4 @@ async def test_upgrade_downgrade_upgrade(empty_db):
     assert await conn.fetchval("select count(*) from documents") == 1  # data survived the round trip
     await conn.close()
     r = alembic(url, "current")
-    assert "0003" in (r.stdout + r.stderr)
+    assert "0004" in (r.stdout + r.stderr)  # head

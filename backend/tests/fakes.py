@@ -24,6 +24,9 @@ class HashEmbedder:
         self.texts_embedded += len(texts)
         return [self._vec(t) for t in texts]
 
+    async def embed_query(self, text: str) -> list[float]:
+        return self._vec(text)
+
     def _vec(self, text: str) -> list[float]:
         raw = b""
         counter = 0
