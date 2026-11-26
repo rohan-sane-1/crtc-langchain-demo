@@ -1,0 +1,7 @@
+{
+  "env": {
+    "LANGSMITH_ENDPOINT": "https://api.smith.langchain.com",
+    "LANGSMITH_AGENT_ID": "langchain-rag-rca",
+    "LANGSMITH_AGENT_ENVIRONMENT": "local"
+  }
+}
